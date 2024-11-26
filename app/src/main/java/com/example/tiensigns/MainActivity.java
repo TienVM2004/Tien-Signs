@@ -1,500 +1,74 @@
-//package com.example.tiensigns;
-//
-//import android.content.Intent;
-//import android.graphics.Bitmap;
-//import android.graphics.Matrix;
-//import android.os.Bundle;
-//import android.provider.MediaStore;
-//import androidx.appcompat.app.AppCompatActivity;
-//import android.util.Log;
-//import android.view.View;
-//import android.widget.Button;
-//import android.widget.FrameLayout;
-//import android.widget.TextView;
-//
-//import androidx.activity.result.ActivityResultLauncher;
-//import androidx.activity.result.contract.ActivityResultContracts;
-//import androidx.exifinterface.media.ExifInterface;
-//// ContentResolver dependency
-//import com.google.mediapipe.formats.proto.LandmarkProto.Landmark;
-//import com.google.mediapipe.formats.proto.LandmarkProto.NormalizedLandmark;
-//import com.google.mediapipe.solutioncore.CameraInput;
-//import com.google.mediapipe.solutioncore.SolutionGlSurfaceView;
-//import com.google.mediapipe.solutioncore.VideoInput;
-//import com.google.mediapipe.solutions.hands.HandLandmark;
-//import com.google.mediapipe.solutions.hands.Hands;
-//import com.google.mediapipe.solutions.hands.HandsOptions;
-//import com.google.mediapipe.solutions.hands.HandsResult;
-//
-//import java.io.BufferedReader;
-//import java.io.IOException;
-//import java.io.InputStream;
-//import java.io.InputStreamReader;
-//import java.util.ArrayDeque;
-//import java.util.ArrayList;
-//import java.util.Arrays;
-//import java.util.Deque;
-//import java.util.List;
-//
-//import org.tensorflow.lite.Interpreter;
-//import org.tensorflow.lite.support.common.FileUtil;
-//
-///** Main activity of MediaPipe Hands app. */
-//public class MainActivity extends AppCompatActivity {
-//    private static final String TAG = "MainActivity";
-//
-//    private Interpreter tflite;
-//    private String[] labels;
-//    private Deque<String> detectedSigns = new ArrayDeque<>(50);
-//    // Variables to keep track of the current sign and the time it was first detected
-//    private String currentSign = null;
-//    private long signStartTime = 0;
-//    private long lastHandDetectedTime = 0;
-//    private static final long SIGN_HOLD_THRESHOLD = 1000; // 1 second in milliseconds
-//    private static final long NO_SIGN_THRESHOLD = 2000; // 2 seconds in milliseconds
-//    // TextViews to display the current sign and the queue of registered signs
-//    private TextView textInferredLetter;
-//    private TextView textDetectedSignsQueue;
-//    // Arrays for TFLite input and output to avoid reallocating them every frame
-//    private float[][] inputArray;
-//    private float[][] outputArray;
-//    private Hands hands;
-//    // Run the pipeline and the model inference on GPU or CPU.
-//    private static final boolean RUN_ON_GPU = true;
-//
-//    private enum InputSource {
-//        UNKNOWN,
-//        IMAGE,
-//        VIDEO,
-//        CAMERA,
-//    }
-//    private InputSource inputSource = InputSource.UNKNOWN;
-//
-//    // Image demo UI and image loader components.
-//    private ActivityResultLauncher<Intent> imageGetter;
-//    private HandsResultImageView imageView;
-//    // Video demo UI and video loader components.
-//    private VideoInput videoInput;
-//    private ActivityResultLauncher<Intent> videoGetter;
-//    // Live camera demo UI and camera components.
-//    private CameraInput cameraInput;
-//
-//    private SolutionGlSurfaceView<HandsResult> glSurfaceView;
-//
-//    @Override
-//    protected void onCreate(Bundle savedInstanceState) {
-//        super.onCreate(savedInstanceState);
-//        setContentView(R.layout.activity_main);
-//        initializeInterpreter();
-//        loadLabels();
-//        textInferredLetter = findViewById(R.id.text_inferred_letter);
-//        textDetectedSignsQueue = findViewById(R.id.text_detected_signs_queue);
-//        imageView = new HandsResultImageView(this);
-//        setupLiveDemoUiComponents();
-//
-//        inputArray = new float[1][42]; // 21 landmarks x 2 coordinates (x, y)
-//        outputArray = new float[1][labels.length];
-//    }
-//
-//    private void initializeInterpreter() {
-//        try {
-//            tflite = new Interpreter(FileUtil.loadMappedFile(this, "keypoint_classifier.tflite"));
-//        } catch (Exception e) {
-//            Log.e(TAG, "Error initializing TensorFlow Lite interpreter: " + e.getMessage());
-//        }
-//    }
-//
-//    private void loadLabels() {
-//        try {
-//            // Open the CSV file from the assets folder
-//            InputStream is = getAssets().open("keypoint_classifier_label.csv");
-//            BufferedReader reader = new BufferedReader(new InputStreamReader(is));
-//
-//            // Read each line from the file and add it to a list
-//            List<String> labelList = new ArrayList<>();
-//            String line;
-//            while ((line = reader.readLine()) != null) {
-//                // Add only non-empty lines, trimming whitespace
-//                if (!line.trim().isEmpty()) {
-//                    labelList.add(line.trim());
-//                }
-//            }
-//            reader.close();
-//
-//            // Convert the list to an array
-//            labels = labelList.toArray(new String[0]);
-//
-//            // Log the loaded labels for debugging
-//            Log.i(TAG, "Labels loaded: " + Arrays.toString(labels));
-//        } catch (IOException e) {
-//            Log.e(TAG, "Error reading label file: " + e.getMessage());
-//        }
-//    }
-//
-//    @Override
-//    protected void onResume() {
-//        super.onResume();
-//        if (inputSource == InputSource.CAMERA) {
-//            // Restarts the camera and the opengl surface rendering.
-//            cameraInput = new CameraInput(this);
-//            cameraInput.setNewFrameListener(textureFrame -> hands.send(textureFrame));
-//            glSurfaceView.post(this::startCamera);
-//            glSurfaceView.setVisibility(View.VISIBLE);
-//        } else if (inputSource == InputSource.VIDEO) {
-//            videoInput.resume();
-//        }
-//    }
-//
-//    @Override
-//    protected void onPause() {
-//        super.onPause();
-//        if (inputSource == InputSource.CAMERA) {
-//            glSurfaceView.setVisibility(View.GONE);
-//            cameraInput.close();
-//        } else if (inputSource == InputSource.VIDEO) {
-//            videoInput.pause();
-//        }
-//    }
-//
-//    /** Sets up the UI components for the live demo with camera input. */
-//    private void setupLiveDemoUiComponents() {
-//        Button startCameraButton = findViewById(R.id.button_start_camera);
-//        startCameraButton.setOnClickListener(
-//                v -> {
-//                    if (inputSource == InputSource.CAMERA) {
-//                        return;
-//                    }
-//                    stopCurrentPipeline();
-//                    setupStreamingModePipeline(InputSource.CAMERA);
-//                });
-//    }
-//
-//    /** Sets up core workflow for streaming mode. */
-//    private void setupStreamingModePipeline(InputSource inputSource) {
-//        this.inputSource = inputSource;
-//        // Initializes a new MediaPipe Hands solution instance in the streaming mode.
-//        hands =
-//                new Hands(
-//                        this,
-//                        HandsOptions.builder()
-//                                .setStaticImageMode(false)
-//                                .setMaxNumHands(2)
-//                                .setRunOnGpu(RUN_ON_GPU)
-//                                .build());
-//        hands.setErrorListener((message, e) -> Log.e(TAG, "MediaPipe Hands error:" + message));
-//
-//        if (inputSource == InputSource.CAMERA) {
-//            cameraInput = new CameraInput(this);
-//            cameraInput.setNewFrameListener(textureFrame -> hands.send(textureFrame));
-//        } else if (inputSource == InputSource.VIDEO) {
-//            videoInput = new VideoInput(this);
-//            videoInput.setNewFrameListener(textureFrame -> hands.send(textureFrame));
-//        }
-//
-//        // Initializes a new Gl surface view with a user-defined HandsResultGlRenderer.
-//        glSurfaceView =
-//                new SolutionGlSurfaceView<>(this, hands.getGlContext(), hands.getGlMajorVersion());
-//        glSurfaceView.setSolutionResultRenderer(new HandsResultGlRenderer());
-//        glSurfaceView.setRenderInputImage(true);
-//        hands.setResultListener(
-//                handsResult -> {
-//                    glSurfaceView.setRenderData(handsResult);
-//                    glSurfaceView.requestRender();
-//                    if (!handsResult.multiHandLandmarks().isEmpty()) {
-//                        List<float[]> landmarkList = extractLandmarkList(handsResult);
-//
-//                        float[] preprocessedLandmarks = preProcessLandmark(landmarkList);
-//
-//                        float[][] inputArray = new float[1][preprocessedLandmarks.length];
-//                        inputArray[0] = preprocessedLandmarks;
-//
-//                        int NUM_CLASSES = labels.length;
-//                        float[][] outputArray = new float[1][NUM_CLASSES];
-//
-//                        tflite.run(inputArray, outputArray);
-//
-//                        float[] probabilities = outputArray[0];
-//                        int resultIndex = getMaxIndex(probabilities);
-//
-//                        String detectedSign = labels[resultIndex];
-//                        long currentTime = System.currentTimeMillis();
-//
-//                        // Update the TextView with the current detected sign
-//                        runOnUiThread(() -> {
-//                            textInferredLetter.setText(detectedSign);
-//                        });
-//
-//                        if (detectedSign.equals(currentSign)) {
-//                            if (currentTime - signStartTime >= SIGN_HOLD_THRESHOLD) {
-//                                // Add the sign to the queue if held for more than 1 second
-//                                if (detectedSigns.size() == 50) {
-//                                    detectedSigns.pollFirst(); // Remove the oldest sign
-//                                }
-//                                detectedSigns.addLast(detectedSign);
-//
-//                                // Build the string from the queue
-//                                StringBuilder sb = new StringBuilder();
-//                                for (String s : detectedSigns) {
-//                                    sb.append(s);
-//                                }
-//                                String detectedSignsString = sb.toString();
-//
-//                                // Update the TextView to display the queue
-//                                runOnUiThread(() -> {
-//                                    textDetectedSignsQueue.setText(detectedSignsString);
-//                                });
-//
-//                                // Reset the sign start time
-//                                signStartTime = currentTime;
-//                            }
-//                        } else {
-//                            // Update currentSign and reset signStartTime
-//                            currentSign = detectedSign;
-//                            signStartTime = currentTime;
-//                        }
-//                    } else {
-//                        // No hand detected, clear the current sign and reset timers
-//                        runOnUiThread(() -> {
-//                            textInferredLetter.setText("");
-//                        });
-//                        currentSign = null;
-//                        signStartTime = 0;
-//                    }
-//                });
-//
-//        // The runnable to start camera after the gl surface view is attached.
-//        // For video input source, videoInput.start() will be called when the video uri is available.
-//        if (inputSource == InputSource.CAMERA) {
-//            glSurfaceView.post(this::startCamera);
-//        }
-//
-//        // Updates the preview layout.
-//        FrameLayout frameLayout = findViewById(R.id.preview_display_layout);
-//        imageView.setVisibility(View.GONE);
-//        frameLayout.removeAllViewsInLayout();
-//        frameLayout.addView(glSurfaceView);
-//        glSurfaceView.setVisibility(View.VISIBLE);
-//        frameLayout.requestLayout();
-//    }
-//
-//    private List<float[]> extractLandmarkList(HandsResult handsResult) {
-//        List<float[]> landmarkPoint = new ArrayList<>();
-//        int imageWidth = handsResult.inputBitmap().getWidth();
-//        int imageHeight = handsResult.inputBitmap().getHeight();
-//
-//        for (NormalizedLandmark landmark : handsResult.multiHandLandmarks().get(0).getLandmarkList()) {
-//            float landmarkX = Math.min(landmark.getX() * imageWidth, imageWidth - 1);
-//            float landmarkY = Math.min(landmark.getY() * imageHeight, imageHeight - 1);
-//            landmarkPoint.add(new float[]{landmarkX, landmarkY});
-//        }
-//        return landmarkPoint;
-//    }
-//
-//    private float[] preProcessLandmark(List<float[]> landmarkList) {
-//        List<float[]> tempLandmarkList = new ArrayList<>(landmarkList);
-//
-//        // Step 1: Normalize landmarks by subtracting the base point (first landmark)
-//        float baseX = tempLandmarkList.get(0)[0];
-//        float baseY = tempLandmarkList.get(0)[1];
-//        for (int i = 0; i < tempLandmarkList.size(); i++) {
-//            tempLandmarkList.get(i)[0] -= baseX;
-//            tempLandmarkList.get(i)[1] -= baseY;
-//        }
-//
-//        // Step 2: Flatten the list
-//        List<Float> flattenedList = new ArrayList<>();
-//        for (float[] point : tempLandmarkList) {
-//            flattenedList.add(point[0]);
-//            flattenedList.add(point[1]);
-//        }
-//
-//        // Step 3: Normalize to -1 to 1 range
-//        float maxAbsValue = 0;
-//        for (Float value : flattenedList) {
-//            maxAbsValue = Math.max(maxAbsValue, Math.abs(value));
-//        }
-//        final float normalizationFactor = maxAbsValue == 0 ? 1 : maxAbsValue;
-//
-//        for (int i = 0; i < flattenedList.size(); i++) {
-//            flattenedList.set(i, flattenedList.get(i) / normalizationFactor);
-//        }
-//
-//        // Convert List<Float> to float[]
-//        float[] preprocessedLandmarks = new float[flattenedList.size()];
-//        for (int i = 0; i < flattenedList.size(); i++) {
-//            preprocessedLandmarks[i] = flattenedList.get(i);
-//        }
-//
-//        return preprocessedLandmarks;
-//    }
-//
-//    private int getMaxIndex(float[] probabilities) {
-//        int maxIndex = 0;
-//        float maxProbability = probabilities[0];
-//        for (int i = 1; i < probabilities.length; i++) {
-//            if (probabilities[i] > maxProbability) {
-//                maxProbability = probabilities[i];
-//                maxIndex = i;
-//            }
-//        }
-//        return maxIndex;
-//    }
-//
-//    private void startCamera() {
-//        cameraInput.start(
-//                this,
-//                hands.getGlContext(),
-//                CameraInput.CameraFacing.BACK,
-//                glSurfaceView.getWidth(),
-//                glSurfaceView.getHeight());
-//    }
-//
-//    private void stopCurrentPipeline() {
-//        if (cameraInput != null) {
-//            cameraInput.setNewFrameListener(null);
-//            cameraInput.close();
-//        }
-//        if (videoInput != null) {
-//            videoInput.setNewFrameListener(null);
-//            videoInput.close();
-//        }
-//        if (glSurfaceView != null) {
-//            glSurfaceView.setVisibility(View.GONE);
-//        }
-//        if (hands != null) {
-//            hands.close();
-//        }
-//    }
-//
-//    private void logWristLandmark(HandsResult result, boolean showPixelValues) {
-//        if (result.multiHandLandmarks().isEmpty()) {
-//            return;
-//        }
-//        NormalizedLandmark wristLandmark =
-//                result.multiHandLandmarks().get(0).getLandmarkList().get(HandLandmark.WRIST);
-//        // For Bitmaps, show the pixel values. For texture inputs, show the normalized coordinates.
-//        if (showPixelValues) {
-//            int width = result.inputBitmap().getWidth();
-//            int height = result.inputBitmap().getHeight();
-//            Log.i(
-//                    TAG,
-//                    String.format(
-//                            "MediaPipe Hand wrist coordinates (pixel values): x=%f, y=%f",
-//                            wristLandmark.getX() * width, wristLandmark.getY() * height));
-//        } else {
-//            Log.i(
-//                    TAG,
-//                    String.format(
-//                            "MediaPipe Hand wrist normalized coordinates (value range: [0, 1]): x=%f, y=%f",
-//                            wristLandmark.getX(), wristLandmark.getY()));
-//        }
-//        if (result.multiHandWorldLandmarks().isEmpty()) {
-//            return;
-//        }
-//        Landmark wristWorldLandmark =
-//                result.multiHandWorldLandmarks().get(0).getLandmarkList().get(HandLandmark.WRIST);
-//        Log.i(
-//                TAG,
-//                String.format(
-//                        "MediaPipe Hand wrist world coordinates (in meters with the origin at the hand's"
-//                                + " approximate geometric center): x=%f m, y=%f m, z=%f m",
-//                        wristWorldLandmark.getX(), wristWorldLandmark.getY(), wristWorldLandmark.getZ()));
-//    }
-//}
-
-
 package com.example.tiensigns;
 
-import android.content.Intent;
-import android.graphics.Bitmap;
-import android.graphics.Matrix;
 import android.os.Bundle;
-import android.os.Handler;
-import android.os.Looper;
-import android.provider.MediaStore;
-
-import androidx.annotation.Nullable;
-import androidx.appcompat.app.AppCompatActivity;
 import android.util.Log;
+import android.view.GestureDetector;
+import android.view.MotionEvent;
 import android.view.View;
+import android.widget.AdapterView;
+import android.widget.ArrayAdapter;
 import android.widget.Button;
 import android.widget.FrameLayout;
+import android.widget.Spinner;
 import android.widget.TextView;
+import android.widget.Toast;
 
-import androidx.activity.result.ActivityResultLauncher;
-import androidx.activity.result.contract.ActivityResultContracts;
-import androidx.exifinterface.media.ExifInterface;
-// ContentResolver dependency
-import com.google.ai.client.generativeai.java.GenerativeModelFutures;
-import com.google.ai.client.generativeai.type.Content;
-import com.google.ai.client.generativeai.type.GenerateContentResponse;
-import com.google.common.util.concurrent.FutureCallback;
-import com.google.common.util.concurrent.Futures;
-import com.google.common.util.concurrent.ListenableFuture;
-import com.google.mediapipe.formats.proto.LandmarkProto.Landmark;
-import com.google.mediapipe.formats.proto.LandmarkProto.NormalizedLandmark;
+import androidx.appcompat.app.AppCompatActivity;
+
 import com.google.mediapipe.solutioncore.CameraInput;
 import com.google.mediapipe.solutioncore.SolutionGlSurfaceView;
-import com.google.mediapipe.solutioncore.VideoInput;
-import com.google.mediapipe.solutions.hands.HandLandmark;
 import com.google.mediapipe.solutions.hands.Hands;
 import com.google.mediapipe.solutions.hands.HandsOptions;
 import com.google.mediapipe.solutions.hands.HandsResult;
 
-import java.io.BufferedReader;
-import java.io.IOException;
-import java.io.InputStream;
-import java.io.InputStreamReader;
-import java.io.OutputStream;
-import java.net.HttpURLConnection;
-import java.net.URL;
-import java.nio.charset.StandardCharsets;
+import org.tensorflow.lite.Interpreter;
+
 import java.util.ArrayDeque;
-import java.util.ArrayList;
-import java.util.Arrays;
 import java.util.Deque;
 import java.util.List;
-import java.util.concurrent.Executor;
-import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
-
-import org.json.JSONObject;
-import org.tensorflow.lite.Interpreter;
-import org.tensorflow.lite.support.common.FileUtil;
 
 import io.github.cdimascio.dotenv.Dotenv;
 
-import com.google.ai.client.generativeai.GenerativeModel;
+import static com.example.tiensigns.Constants.*;
 
+public class MainActivity extends AppCompatActivity implements SwipeGestureListener.SwipeListener {
 
-/** Main activity of MediaPipe Hands app. */
-public class MainActivity extends AppCompatActivity {
-    private static final String TAG = "MainActivity";
+    private static final String TAG = Constants.TAG;
+
     private static String GEMINI_API_KEY = "";
     private static String GEMINI_API_URL = "";
 
     private Interpreter tflite;
     private String[] labels;
-    private int MAX_QUEUE_LENGTH = 50;
+
     private Deque<String> detectedSigns = new ArrayDeque<>(MAX_QUEUE_LENGTH);
-    // Variables to keep track of the current sign and the time it was first detected
     private String currentSign = null;
     private long signStartTime = 0;
     private long lastHandDetectedTime = 0;
-    private static final long SIGN_HOLD_THRESHOLD = 1000; // 1 second in milliseconds
-    private static final long NO_SIGN_THRESHOLD = 2000; // 2 seconds in milliseconds
-    private static final long PROCESS_SIGN_THRESHOLD = 3000; // 3 seconds
-    // TextViews to display the current sign and the queue of registered signs
+    private boolean hasProcessedQueue = false;
+
+    private GestureDetector gestureDetector;
+    private boolean isManualVisible = false;
+
     private TextView textInferredLetter;
     private TextView textDetectedSignsQueue;
-    // Arrays for TFLite input and output to avoid reallocating them every frame
+
     private float[][] inputArray;
     private float[][] outputArray;
 
-
     private Hands hands;
-    // Run the pipeline and the model inference on GPU or CPU.
-    private static final boolean RUN_ON_GPU = true;
+    private InputSource inputSource = InputSource.UNKNOWN;
+
+    private CameraInput cameraInput;
+    private SolutionGlSurfaceView<HandsResult> glSurfaceView;
+
+    private GeminiApiClient geminiApiClient;
+    private HandProcessor handProcessor;
+    private ModelHandler modelHandler;
+
+    private String selectedLanguage = "English"; // Default language
+
+    private CameraInput.CameraFacing cameraFacing = CameraInput.CameraFacing.BACK; // Default to back camera
 
     private enum InputSource {
         UNKNOWN,
@@ -502,92 +76,138 @@ public class MainActivity extends AppCompatActivity {
         VIDEO,
         CAMERA,
     }
-    private InputSource inputSource = InputSource.UNKNOWN;
-
-    // Image demo UI and image loader components.
-    private ActivityResultLauncher<Intent> imageGetter;
-    private HandsResultImageView imageView;
-    // Video demo UI and video loader components.
-    private VideoInput videoInput;
-    private ActivityResultLauncher<Intent> videoGetter;
-    // Live camera demo UI and camera components.
-    private CameraInput cameraInput;
-
-    private SolutionGlSurfaceView<HandsResult> glSurfaceView;
-    private GenerativeModelFutures generativeModelFutures = null;
 
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-        setContentView(R.layout.activity_main);
-        initializeInterpreter();
-        loadLabels();
-        textInferredLetter = findViewById(R.id.text_inferred_letter);
-        textDetectedSignsQueue = findViewById(R.id.text_detected_signs_queue);
-        imageView = new HandsResultImageView(this);
-        setupLiveDemoUiComponents();
+        showMainLayout(); // Initialize with main layout
+
+        // Load environment variables
         Dotenv dotenv = Dotenv.configure()
                 .directory("/assets")
-                .filename("env") // instead of '.env', use 'env'
+                .filename("env")
                 .load();
         GEMINI_API_KEY = dotenv.get("GEMINI_API_KEY");
         GEMINI_API_URL = dotenv.get("GEMINI_API_URL");
         Log.i("EnvConfig", "API Key: " + GEMINI_API_KEY);
         Log.i("EnvConfig", "API URL: " + GEMINI_API_URL);
-        GenerativeModel gm = new GenerativeModel(
-                /* modelName */ "gemini-1.5-flash",
-                /* apiKey */ GEMINI_API_KEY);
-        this.generativeModelFutures = GenerativeModelFutures.from(gm);
-        inputArray = new float[1][42]; // 21 landmarks x 2 coordinates (x, y)
+
+        // Initialize GeminiApiClient
+        geminiApiClient = new GeminiApiClient(GEMINI_API_KEY);
+
+        // Initialize ModelHandler, tflite interpreter, and labels
+        modelHandler = new ModelHandler(this);
+        tflite = modelHandler.getInterpreter();
+        labels = modelHandler.getLabels();
+
+        // Initialize HandProcessor
+        handProcessor = new HandProcessor();
+
+        // Initialize input and output arrays
+        inputArray = new float[1][42]; // 21 landmarks x 2 coordinates
         outputArray = new float[1][labels.length];
     }
 
-    private void initializeInterpreter() {
-        try {
-            tflite = new Interpreter(FileUtil.loadMappedFile(this, "keypoint_classifier.tflite"));
-        } catch (Exception e) {
-            Log.e(TAG, "Error initializing TensorFlow Lite interpreter: " + e.getMessage());
+    private void setupLanguageSpinner() {
+        Spinner languageSpinner = findViewById(R.id.language_spinner);
+
+        // Create an array of languages
+        String[] languages = {"English", "Spanish", "French", "Vietnamese"};
+
+        // Create an ArrayAdapter
+        ArrayAdapter<String> adapter = new ArrayAdapter<>(
+                this, android.R.layout.simple_spinner_item, languages);
+        adapter.setDropDownViewResource(android.R.layout.simple_spinner_dropdown_item);
+
+        // Set the adapter to the spinner
+        languageSpinner.setAdapter(adapter);
+
+        // Set default selection based on selectedLanguage
+        int defaultPosition = adapter.getPosition(selectedLanguage);
+        languageSpinner.setSelection(defaultPosition);
+
+        // Set the selected language listener
+        languageSpinner.setOnItemSelectedListener(new AdapterView.OnItemSelectedListener() {
+            @Override
+            public void onItemSelected(AdapterView<?> parent, View view, int position, long id) {
+                selectedLanguage = languages[position];
+                Toast.makeText(MainActivity.this, "Selected Language: " + selectedLanguage, Toast.LENGTH_SHORT).show();
+            }
+
+            @Override
+            public void onNothingSelected(AdapterView<?> parent) {
+                // Handle the case where no selection is made
+            }
+        });
+    }
+
+    private void initializeViews() {
+        // Initialize GestureDetector
+        gestureDetector = new GestureDetector(this, new SwipeGestureListener(this));
+
+        // Initialize TextViews
+        textInferredLetter = findViewById(R.id.text_inferred_letter);
+        textDetectedSignsQueue = findViewById(R.id.text_detected_signs_queue);
+
+        // Initialize Spinner
+        setupLanguageSpinner();
+
+        // Set up UI components
+        setupLiveDemoUiComponents();
+    }
+
+    @Override
+    public boolean onTouchEvent(MotionEvent event) {
+        // Delegate the touch event to GestureDetector
+        return gestureDetector.onTouchEvent(event) || super.onTouchEvent(event);
+    }
+
+    @Override
+    public void onSwipeLeft() {
+        if (!isManualVisible) {
+            showHowToUseLayout();
         }
     }
 
-    private void loadLabels() {
-        try {
-            // Open the CSV file from the assets folder
-            InputStream is = getAssets().open("keypoint_classifier_label.csv");
-            BufferedReader reader = new BufferedReader(new InputStreamReader(is));
-
-            // Read each line from the file and add it to a list
-            List<String> labelList = new ArrayList<>();
-            String line;
-            while ((line = reader.readLine()) != null) {
-                // Add only non-empty lines, trimming whitespace
-                if (!line.trim().isEmpty()) {
-                    labelList.add(line.trim());
-                }
-            }
-            reader.close();
-
-            // Convert the list to an array
-            labels = labelList.toArray(new String[0]);
-
-            // Log the loaded labels for debugging
-            Log.i(TAG, "Labels loaded: " + Arrays.toString(labels));
-        } catch (IOException e) {
-            Log.e(TAG, "Error reading label file: " + e.getMessage());
+    @Override
+    public void onSwipeRight() {
+        if (isManualVisible) {
+            showMainLayout();
         }
+    }
+
+    private void showMainLayout() {
+        setContentView(R.layout.activity_main);
+        isManualVisible = false;
+
+        // Initialize views
+        initializeViews();
+
+        // Re-initialize the camera pipeline unconditionally
+        setupStreamingModePipeline(InputSource.CAMERA);
+    }
+
+    private void showHowToUseLayout() {
+        // Stop the camera pipeline to release resources
+        stopCurrentPipeline();
+
+        setContentView(R.layout.how_to_use);
+        isManualVisible = true;
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        if (isManualVisible) {
+            return;
+        }
+
+        // Always restart the camera pipeline when resuming
         if (inputSource == InputSource.CAMERA) {
-            // Restarts the camera and the opengl surface rendering.
             cameraInput = new CameraInput(this);
             cameraInput.setNewFrameListener(textureFrame -> hands.send(textureFrame));
             glSurfaceView.post(this::startCamera);
             glSurfaceView.setVisibility(View.VISIBLE);
-        } else if (inputSource == InputSource.VIDEO) {
-            videoInput.resume();
         }
     }
 
@@ -597,22 +217,52 @@ public class MainActivity extends AppCompatActivity {
         if (inputSource == InputSource.CAMERA) {
             glSurfaceView.setVisibility(View.GONE);
             cameraInput.close();
-        } else if (inputSource == InputSource.VIDEO) {
-            videoInput.pause();
         }
     }
 
     /** Sets up the UI components for the live demo with camera input. */
     private void setupLiveDemoUiComponents() {
-        Button startCameraButton = findViewById(R.id.button_start_camera);
+        Button startCameraButton = findViewById(R.id.button_del_detection);
         startCameraButton.setOnClickListener(
                 v -> {
-                    if (inputSource == InputSource.CAMERA) {
-                        return;
-                    }
-                    stopCurrentPipeline();
-                    setupStreamingModePipeline(InputSource.CAMERA);
+                    detectedSigns.clear();
+
+                    // Update the TextView displaying the detections
+                    updateDetectedSignsTextView();
+
+                    // Provide user feedback
+                    Toast.makeText(this, "All detections deleted", Toast.LENGTH_SHORT).show();
                 });
+
+        // Initialize Change Camera Button
+        Button changeCameraButton = findViewById(R.id.button_change_camera);
+        changeCameraButton.setOnClickListener(
+                v -> {
+                    if (inputSource == InputSource.CAMERA) {
+                        switchCamera();
+                    } else {
+                        Toast.makeText(this, "Camera is not running", Toast.LENGTH_SHORT).show();
+                    }
+                });
+    }
+
+    /** Switches the camera between front and back. */
+    private void switchCamera() {
+        if (cameraInput != null) {
+            cameraInput.setNewFrameListener(null);
+            cameraInput.close();
+            cameraInput = null;
+        }
+
+        // Toggle the camera facing
+        cameraFacing = (cameraFacing == CameraInput.CameraFacing.BACK)
+                ? CameraInput.CameraFacing.FRONT
+                : CameraInput.CameraFacing.BACK;
+
+        // Reinitialize cameraInput with the new facing
+        cameraInput = new CameraInput(this);
+        cameraInput.setNewFrameListener(textureFrame -> hands.send(textureFrame));
+        startCamera();
     }
 
     /** Sets up core workflow for streaming mode. */
@@ -632,12 +282,9 @@ public class MainActivity extends AppCompatActivity {
         if (inputSource == InputSource.CAMERA) {
             cameraInput = new CameraInput(this);
             cameraInput.setNewFrameListener(textureFrame -> hands.send(textureFrame));
-        } else if (inputSource == InputSource.VIDEO) {
-            videoInput = new VideoInput(this);
-            videoInput.setNewFrameListener(textureFrame -> hands.send(textureFrame));
         }
 
-        // Initializes a new Gl surface view with a user-defined HandsResultGlRenderer.
+        // Initializes a new GL surface view with a user-defined HandsResultGlRenderer.
         glSurfaceView =
                 new SolutionGlSurfaceView<>(this, hands.getGlContext(), hands.getGlMajorVersion());
         glSurfaceView.setSolutionResultRenderer(new HandsResultGlRenderer());
@@ -646,14 +293,13 @@ public class MainActivity extends AppCompatActivity {
         // Set the result listener to the refactored method
         hands.setResultListener(this::processHandsResult);
 
-        // The runnable to start camera after the gl surface view is attached.
+        // The runnable to start camera after the GL surface view is attached.
         if (inputSource == InputSource.CAMERA) {
             glSurfaceView.post(this::startCamera);
         }
 
         // Updates the preview layout.
         FrameLayout frameLayout = findViewById(R.id.preview_display_layout);
-        imageView.setVisibility(View.GONE);
         frameLayout.removeAllViewsInLayout();
         frameLayout.addView(glSurfaceView);
         glSurfaceView.setVisibility(View.VISIBLE);
@@ -668,6 +314,9 @@ public class MainActivity extends AppCompatActivity {
 
         if (!handsResult.multiHandLandmarks().isEmpty()) {
             lastHandDetectedTime = currentTime; // Update the last time hands were detected
+
+            hasProcessedQueue = false; // Reset the flag because hands are detected again
+
             String detectedSign = performInference(handsResult);
 
             updateDetectedSigns(detectedSign, currentTime);
@@ -684,9 +333,9 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private String performInference(HandsResult handsResult) {
-        List<float[]> landmarkList = extractLandmarkList(handsResult);
+        List<float[]> landmarkList = handProcessor.extractLandmarkList(handsResult);
 
-        float[] preprocessedLandmarks = preProcessLandmark(landmarkList);
+        float[] preprocessedLandmarks = handProcessor.preProcessLandmark(landmarkList);
 
         // Copy preprocessedLandmarks into inputArray[0]
         System.arraycopy(preprocessedLandmarks, 0, inputArray[0], 0, preprocessedLandmarks.length);
@@ -753,12 +402,13 @@ public class MainActivity extends AppCompatActivity {
         long timeSinceLastHandDetected = currentTime - lastHandDetectedTime;
 
         // Check if more than PROCESS_SIGN_THRESHOLD has passed since last hand detection
-        if (timeSinceLastHandDetected >= PROCESS_SIGN_THRESHOLD) {
+        if (!hasProcessedQueue && timeSinceLastHandDetected >= PROCESS_SIGN_THRESHOLD) {
             Log.i("ProcessQueue", "processDetectedSignsQueue called");
             // Trigger the API call to process the queue
             processDetectedSignsQueue();
-            // Reset lastHandDetectedTime to prevent multiple processing
-            lastHandDetectedTime = 0;
+            // Set the flag to prevent multiple processing
+            hasProcessedQueue = true;
+            // Do not reset lastHandDetectedTime here
         }
         // Check if more than NO_SIGN_THRESHOLD has passed since last hand detection
         else if (timeSinceLastHandDetected >= NO_SIGN_THRESHOLD) {
@@ -774,127 +424,48 @@ public class MainActivity extends AppCompatActivity {
         }
     }
 
-
     private void processDetectedSignsQueue() {
         Log.i("ProcessQueue", "processDetectedSignsQueue called");
         // Get the detected sentence from the queue
         String detectedSentence = String.join("", detectedSigns);
 
-        // Prepare the prompt
-        String prompt = "You are a well-made Sign Language Processor. Your task is to receive a string of Sign Language, which has the form of \"AN_UPPER_CASED_AND_SNAKE_CASED_STRING\", and interpret what the string means. You should be able to interpret the string and convert it into a human-readable format.\n\nFor example, if you receive the string \"HELLO_WORLD_\", you should be able to interpret it as \"Hello, World!\".\n\nHere are a few rules that you must strictly follow: The given string is most likely not syntactically correct, hence you should not rely on the correctness of the string. You should be able to interpret the string even if it is not syntactically correct. Some errors that may exist in the string include the appearance of 1 or many characters that disrupt the syntax of a word, the reappearance of many characters that do not belong to the syntax of a word, or the absence of a character that is necessary for the syntax of a word. In sign language, the sign of some letters may be similar, which leads to errors in detection. Here are some pairs of letters that may be used mistakenly in place of each other: \"S\" and \"T\", \"S\" and \"A\", \"M\" and \"A\", \"M\" and \"N\", \"R\" and \"U\".\n\nHere are a few examples of errors that may exist in the string, along with how you should interpret them:\n\"HHHEEELLLLOOO_WOOOORRRLLD_\" -> \"HELLO_WORLD_\"\n\"I_MMISTSS_YOUUU_\" -> \"I_MISS_YOU_\"\n\"CCCCCCC_HOWWW_ARE_YOUUU_\" -> \"HOW_ARE_YOU_\"\n\"THIMK_ILL_NISST_YOU_\" -> \"THINK_ILL_MISS_YOU_\"\n\n. Always remember one extra '_' token at the end of your interpretation. Finally, you must only return the corrected string, and no other information. Answer with the corrected string only, do not include any other information in your answer. Here is your string:\n" + detectedSentence;
+        // Prepare the prompt based on the selected language
+        String prompt = "You are a well-made Sign Language Processor. Your task is to receive a string of Sign Language with given language is " + selectedLanguage+ ", which has the form of \"AN_UPPER_CASED_AND_SNAKE_CASED_STRING\", and interpret what the string means. You should be able to interpret the string and convert it into a human-readable format.\n\nFor example, if you receive the string \"HELLO_WORLD_\", you should be able to interpret it as \"Hello, World!\".\n\nHere are a few rules that you must strictly follow: The given string is most likely not syntactically correct, hence you should not rely on the correctness of the string. You should be able to interpret the string even if it is not syntactically correct. Some errors that may exist in the string include the appearance of 1 or many characters that disrupt the syntax of a word, the reappearance of many characters that do not belong to the syntax of a word, or the absence of a character that is necessary for the syntax of a word. In sign language, the sign of some letters may be similar, which leads to errors in detection. Here are some pairs of letters that may be used mistakenly in place of each other: \"S\" and \"T\", \"S\" and \"A\", \"M\" and \"A\", \"M\" and \"N\", \"R\" and \"U\".\n\nHere are a few English examples of errors that may exist in the string, along with how you should interpret them:\n\"HHHEEELLLLOOO_WOOOORRRLLD_\" -> \"HELLO_WORLD_\"\n\"I_MMISTSS_YOUUU_\" -> \"I_MISS_YOU_\"\n\"CCCCCCC_HOWWW_ARE_YOUUU_\" -> \"HOW_ARE_YOU_\"\n\"THIMK_ILL_NISST_YOU_\" -> \"THINK_ILL_MISS_YOU_\"\n\nAlways remember one extra '_' token at the end of your interpretation, and your interpretation is based on the language, which is " + selectedLanguage + " in this case. Finally, you must only return the corrected string, and no other information. Answer with the corrected string only, do not include any other information in your answer. Here is your string:\n" + detectedSentence;
 
-        // Send the prompt and detected sentence to the Gemini API
-        Log.i("yes", prompt);
+
+        // Send the prompt to the Gemini API
         sendPromptToGemini(prompt);
     }
 
     private void sendPromptToGemini(String prompt) {
-        // Use a single-threaded executor for handling the asynchronous call
-        Executor executor = Executors.newSingleThreadExecutor();
+        geminiApiClient.sendPrompt(prompt, new GeminiApiClient.GeminiResponseListener() {
+            @Override
+            public void onResponse(String cleanedText) {
+                // Update the detectedSigns queue and UI on the main thread
+                runOnUiThread(() -> {
+                    // Clear the detectedSigns queue
+                    detectedSigns.clear();
 
-        // Create a content object with the prompt
-        Content content = new Content.Builder().addText(prompt).build();
-
-        // Call the generative model to generate content
-        ListenableFuture<GenerateContentResponse> response = generativeModelFutures.generateContent(content);
-
-        // Add a callback to handle success and failure
-        Futures.addCallback(
-                response,
-                new FutureCallback<GenerateContentResponse>() {
-                    @Override
-                    public void onSuccess(@Nullable GenerateContentResponse result) {
-                        if (result != null) {
-                            String generatedText = result.getText();
-
-                            // Remove redundant spaces from the generated text
-                            String cleanedText = generatedText.replaceAll("\\s+", "");
-
-                            // Update the detectedSigns queue and UI on the main thread
-                            Handler handler = new Handler(Looper.getMainLooper());
-                            handler.post(() -> {
-                                // Clear the detectedSigns queue
-                                detectedSigns.clear();
-
-                                // Redistribute characters of the cleaned text into the queue
-                                for (char c : cleanedText.toCharArray()) {
-                                    if (detectedSigns.size() == MAX_QUEUE_LENGTH) {
-                                        detectedSigns.pollFirst(); // Remove the oldest element
-                                    }
-                                    detectedSigns.addLast(String.valueOf(c)); // Add the new character
-                                }
-
-                                // Update the UI to reflect the changes in the queue
-                                updateDetectedSignsTextView();
-                            });
-                        } else {
-                            Log.e("GeminiAPI", "Received null response from the API.");
+                    // Redistribute characters of the cleaned text into the queue
+                    for (char c : cleanedText.toCharArray()) {
+                        if (detectedSigns.size() == MAX_QUEUE_LENGTH) {
+                            detectedSigns.pollFirst(); // Remove the oldest element
                         }
+                        detectedSigns.addLast(String.valueOf(c)); // Add the new character
                     }
 
-                    @Override
-                    public void onFailure(Throwable t) {
-                        // Log the error
-                        Log.e("GeminiAPI", "Error in generating content: " + t.getMessage());
-                        t.printStackTrace();
-                    }
-                },
-                executor
-        );
-    }
+                    // Update the UI to reflect the changes in the queue
+                    updateDetectedSignsTextView();
+                });
+            }
 
-
-
-
-    private List<float[]> extractLandmarkList(HandsResult handsResult) {
-        List<float[]> landmarkPoint = new ArrayList<>();
-        int imageWidth = handsResult.inputBitmap().getWidth();
-        int imageHeight = handsResult.inputBitmap().getHeight();
-
-        for (NormalizedLandmark landmark : handsResult.multiHandLandmarks().get(0).getLandmarkList()) {
-            float landmarkX = Math.min(landmark.getX() * imageWidth, imageWidth - 1);
-            float landmarkY = Math.min(landmark.getY() * imageHeight, imageHeight - 1);
-            landmarkPoint.add(new float[]{landmarkX, landmarkY});
-        }
-        return landmarkPoint;
-    }
-
-    private float[] preProcessLandmark(List<float[]> landmarkList) {
-        List<float[]> tempLandmarkList = new ArrayList<>(landmarkList);
-
-        // Step 1: Normalize landmarks by subtracting the base point (first landmark)
-        float baseX = tempLandmarkList.get(0)[0];
-        float baseY = tempLandmarkList.get(0)[1];
-        for (int i = 0; i < tempLandmarkList.size(); i++) {
-            tempLandmarkList.get(i)[0] -= baseX;
-            tempLandmarkList.get(i)[1] -= baseY;
-        }
-
-        // Step 2: Flatten the list
-        List<Float> flattenedList = new ArrayList<>();
-        for (float[] point : tempLandmarkList) {
-            flattenedList.add(point[0]);
-            flattenedList.add(point[1]);
-        }
-
-        // Step 3: Normalize to -1 to 1 range
-        float maxAbsValue = 0;
-        for (Float value : flattenedList) {
-            maxAbsValue = Math.max(maxAbsValue, Math.abs(value));
-        }
-        final float normalizationFactor = maxAbsValue == 0 ? 1 : maxAbsValue;
-
-        for (int i = 0; i < flattenedList.size(); i++) {
-            flattenedList.set(i, flattenedList.get(i) / normalizationFactor);
-        }
-
-        // Convert List<Float> to float[]
-        float[] preprocessedLandmarks = new float[flattenedList.size()];
-        for (int i = 0; i < flattenedList.size(); i++) {
-            preprocessedLandmarks[i] = flattenedList.get(i);
-        }
-
-        return preprocessedLandmarks;
+            @Override
+            public void onError(Throwable t) {
+                // Handle error
+                Log.e("GeminiAPI", "Error in generating content: " + t.getMessage());
+                t.printStackTrace();
+            }
+        });
     }
 
     private int getMaxIndex(float[] probabilities) {
@@ -913,7 +484,7 @@ public class MainActivity extends AppCompatActivity {
         cameraInput.start(
                 this,
                 hands.getGlContext(),
-                CameraInput.CameraFacing.BACK,
+                cameraFacing,
                 glSurfaceView.getWidth(),
                 glSurfaceView.getHeight());
     }
@@ -922,51 +493,14 @@ public class MainActivity extends AppCompatActivity {
         if (cameraInput != null) {
             cameraInput.setNewFrameListener(null);
             cameraInput.close();
-        }
-        if (videoInput != null) {
-            videoInput.setNewFrameListener(null);
-            videoInput.close();
+            cameraInput = null;
         }
         if (glSurfaceView != null) {
             glSurfaceView.setVisibility(View.GONE);
         }
         if (hands != null) {
             hands.close();
+            hands = null;
         }
-    }
-
-    private void logWristLandmark(HandsResult result, boolean showPixelValues) {
-        if (result.multiHandLandmarks().isEmpty()) {
-            return;
-        }
-        NormalizedLandmark wristLandmark =
-                result.multiHandLandmarks().get(0).getLandmarkList().get(HandLandmark.WRIST);
-        // For Bitmaps, show the pixel values. For texture inputs, show the normalized coordinates.
-        if (showPixelValues) {
-            int width = result.inputBitmap().getWidth();
-            int height = result.inputBitmap().getHeight();
-            Log.i(
-                    TAG,
-                    String.format(
-                            "MediaPipe Hand wrist coordinates (pixel values): x=%f, y=%f",
-                            wristLandmark.getX() * width, wristLandmark.getY() * height));
-        } else {
-            Log.i(
-                    TAG,
-                    String.format(
-                            "MediaPipe Hand wrist normalized coordinates (value range: [0, 1]): x=%f, y=%f",
-                            wristLandmark.getX(), wristLandmark.getY()));
-        }
-        if (result.multiHandWorldLandmarks().isEmpty()) {
-            return;
-        }
-        Landmark wristWorldLandmark =
-                result.multiHandWorldLandmarks().get(0).getLandmarkList().get(HandLandmark.WRIST);
-        Log.i(
-                TAG,
-                String.format(
-                        "MediaPipe Hand wrist world coordinates (in meters with the origin at the hand's"
-                                + " approximate geometric center): x=%f m, y=%f m, z=%f m",
-                        wristWorldLandmark.getX(), wristWorldLandmark.getY(), wristWorldLandmark.getZ()));
     }
 }

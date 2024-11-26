@@ -1,0 +1,41 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:orientation="vertical"
+    android:padding="16dp"
+    android:gravity="center"
+    android:background="#000000">
+
+    <!-- App Title -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="Tien Signs: Ứng dụng phát hiện ngôn ngữ ký hiệu (ASL)"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:textSize="24sp"
+        android:gravity="center"
+        android:padding="16dp" />
+
+    <!-- Instructions -->
+    <TextView
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:text="1. Sử dụng bảng NNKH Mỹ (viết tắt là ASL).\n2. Ứng dụng phát hiện NNKH trong thời gian thực.\n3. Giữ nguyên 1 ký hiệu trong 1 giây để ghi nhận.\n4. Bỏ tay khỏi màn hình 2 giây để ghi nhận phím cách.\n5. Bỏ tay khỏi màn hình 3 giây để tự động làm đẹp các ký hiệu.\n6. Vuốt trái để tiếp tục. Xem bảng ký tự ASL ở phía dưới."
+        android:textColor="#FFFFFF"
+        android:textSize="16sp"
+        android:lineSpacingExtra="4dp"
+        android:padding="16dp" />
+
+    <!-- Image -->
+    <ImageView
+        android:id="@+id/example_image"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:layout_marginTop="16dp"
+        android:contentDescription="Example Image"
+        android:src="@drawable/asl_alphabet"
+        android:scaleType="fitCenter" />
+
+</LinearLayout>
